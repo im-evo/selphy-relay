@@ -4,7 +4,7 @@ An AirPrint relay that lets current iPhones and iPads print to a **Canon SELPHY 
 It runs on an OpenWrt / GL.iNet router (or any Linux box with avahi), appears on phones as
 "*&lt;printer name&gt; Relay*", and forwards jobs to the printer while working around its firmware bugs.
 
-> **Status: early (v1.0.0).** Developed on a GL.iNet Flint 2 (GL-MT6000) with a CP1200 and a current iPhone.
+> **Status: early (v1.0.0).** Developed and tested on a GL.iNet Flint 2 (GL-MT6000) with a CP1200 and current Apple devices.
 > Reports from other routers, iOS versions and SELPHY models are welcome — please open an issue.
 
 ## Why
@@ -67,6 +67,8 @@ never discovers itself.
 
 `http://<router>:8631/` shows printer state and problems as the printer reports them (paper, ribbon, errors), the
 loaded paper size, recent jobs with results, counters and the log. `/status.json` has the same data.
+
+![Status page](docs/status-page.png)
 
 ## Limits
 
