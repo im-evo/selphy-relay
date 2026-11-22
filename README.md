@@ -4,7 +4,7 @@ An AirPrint relay that lets current iPhones and iPads print to a **Canon SELPHY 
 It runs on an OpenWrt / GL.iNet router (or any Linux box with avahi), appears on phones as
 "*&lt;printer name&gt; Relay*", and forwards jobs to the printer while working around its firmware bugs.
 
-> **Status: early (v1.0.0).** Developed and tested on a GL.iNet Flint 2 (GL-MT6000) with a CP1200 and current Apple devices.
+> **Status: early.** Developed and tested on a GL.iNet Flint 2 (GL-MT6000) with a CP1200 and current Apple devices.
 > Reports from other routers, iOS versions and SELPHY models are welcome — please open an issue.
 
 ## Why
@@ -31,14 +31,14 @@ Needs `avahi-daemon`, which GL.iNet firmware already runs. On the router:
 
 ```sh
 cd /tmp
-wget https://github.com/im-evo/selphy-relay/releases/download/v1.0.0/selphy-relay-1.0.0.tar.gz
-tar xzf selphy-relay-1.0.0.tar.gz && cd selphy-relay && ./install.sh
+wget https://github.com/im-evo/selphy-relay/releases/latest/download/selphy-relay.tar.gz
+tar xzf selphy-relay.tar.gz && cd selphy-relay && ./install.sh
 ```
 
 (If the router's `wget` can't do HTTPS, download the tarball on a computer and `scp -O` it to `/tmp`.)
 
 Then print to "*&lt;printer name&gt; Relay*". Status page: `http://<router>:8631/`.
-Uninstall: `./install.sh uninstall`.
+Upgrade: run the same commands again (your config is kept). Uninstall: `./install.sh uninstall`.
 
 The installer adds the binary, init script and config to `/etc/sysupgrade.conf`. After a firmware upgrade, run
 `/etc/init.d/selphy-relay enable && /etc/init.d/selphy-relay start` once (the boot link isn't preserved).
@@ -66,7 +66,8 @@ never discovers itself.
 ## Status page
 
 `http://<router>:8631/` shows printer state and problems as the printer reports them (paper, ribbon, errors), the
-loaded paper size, recent jobs with results, counters and the log. `/status.json` has the same data.
+loaded paper size, recent jobs with results, counters and the log. A switched-off printer shows as "offline"
+(not an error); only print jobs that fail count as failed. `/status.json` has the same data.
 
 ![Status page](docs/status-page.png)
 

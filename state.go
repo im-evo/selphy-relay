@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"crypto/sha1"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -104,14 +106,72 @@ func (t *target) uri() string {
 var printerMu sync.Mutex
 
 var httpc = &http.Client{
-	Timeout:   10 * time.Minute,
-	Transport: &http.Transport{DisableKeepAlives: true, DisableCompression: true},
+	Timeout: 10 * time.Minute, // a print job's reply can take a while
+	Transport: &http.Transport{
+		DisableKeepAlives:  true,
+		DisableCompression: true,
+		DialContext:        (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+	},
 }
 
-func printerDo(t *target, body []byte) ([]byte, error) {
+// ---- printer reachability ----
+
+var errOffline = errors.New("printer is offline")
+
+var reach struct {
+	sync.Mutex
+	known   bool // at least one attempt made
+	online  bool
+	since   time.Time // when the current state began
+	tried   time.Time // last real connection attempt
+	lastErr string
+}
+
+// note records the outcome of a real connection attempt and logs state changes only.
+func note(err error) {
+	reach.Lock()
+	defer reach.Unlock()
+	reach.tried = time.Now()
+	online := err == nil
+	if !reach.known || online != reach.online {
+		if online {
+			if reach.known {
+				log.Printf("printer back online")
+				go discoverOnce() // pick up details missed while it was off
+			}
+		} else {
+			log.Printf("printer offline: %v", err)
+		}
+		reach.known, reach.online, reach.since = true, online, time.Now()
+	}
+	if err != nil {
+		reach.lastErr = err.Error()
+	}
+}
+
+// skipOffline reports whether to fail fast: the printer was offline at the last
+// attempt, made less than 10 seconds ago.
+func skipOffline() bool {
+	reach.Lock()
+	defer reach.Unlock()
+	return reach.known && !reach.online && time.Since(reach.tried) < 10*time.Second
+}
+
+func printerOnline() (online, known bool, since time.Time) {
+	reach.Lock()
+	defer reach.Unlock()
+	return reach.online, reach.known, reach.since
+}
+
+// printerDo sends one IPP request to the printer. probe=true always attempts a
+// connection (status poller); otherwise requests fail fast while the printer is offline.
+func printerDo(t *target, body []byte, probe bool) ([]byte, error) {
 	addr, path := t.get()
 	if addr == "" {
-		return nil, fmt.Errorf("printer not found yet")
+		return nil, errOffline
+	}
+	if !probe && skipOffline() {
+		return nil, errOffline
 	}
 	req, _ := http.NewRequest(http.MethodPost, "http://"+addr+path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/ipp")
@@ -119,9 +179,11 @@ func printerDo(t *target, body []byte) ([]byte, error) {
 	defer printerMu.Unlock()
 	start := time.Now()
 	resp, err := httpc.Do(req)
-	if err != nil {
-		return nil, err
+	if err != nil { // couldn't connect or the connection broke: treat as offline
+		note(err)
+		return nil, errOffline
 	}
+	note(nil)
 	defer resp.Body.Close()
 	rb, err := io.ReadAll(resp.Body)
 	if d := time.Since(start); d > 5*time.Second {

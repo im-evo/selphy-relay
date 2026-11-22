@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -20,7 +21,7 @@ import (
 	"time"
 )
 
-const version = "1.0.0"
+const version = "1.0.1"
 
 var (
 	listen   = flag.String("listen", ":8631", "address to listen on")
@@ -46,7 +47,7 @@ var (
 	listenPt int
 	counters struct {
 		sync.Mutex
-		requests, jobs, pages, errors int
+		requests, jobs, pages, failed int
 	}
 	createJobs = struct {
 		sync.Mutex
@@ -141,10 +142,18 @@ func discoverOnce() {
 	case tgt.addr == "":
 		tgt.lastError = fmt.Sprintf("no printer matching %q found on %s", *match, *iface)
 	}
-	addr := tgt.addr
+	addr, inst, maxQ := tgt.addr, tgt.instance, tgt.maxQ
 	tgt.mu.Unlock()
 	if addr != "" && addr != prevAddr {
-		log.Printf("printer: %s at %s", tgt.instance, addr)
+		if inst != "" {
+			log.Printf("printer: %s at %s", inst, addr)
+		} else {
+			log.Printf("printer: %s", addr)
+		}
+	}
+	// (Re)read printer details when the address changed or they were never read,
+	// e.g. because the printer was off when the relay started.
+	if addr != "" && (addr != prevAddr || maxQ == 0) {
 		refreshPrinterInfo()
 	}
 	if addr != "" {
@@ -163,10 +172,9 @@ func setErr(s string) {
 // TXT record fallback when the printer was configured by address only.
 func refreshPrinterInfo() {
 	rb, err := printerDo(tgt, buildGPA(tgt.uri(), "print-quality-supported", "printer-uuid", "printer-info",
-		"printer-make-and-model", "document-format-supported", "urf-supported", "color-supported"))
+		"printer-make-and-model", "document-format-supported", "urf-supported", "color-supported"), true)
 	if err != nil {
-		setErr("printer query: " + err.Error())
-		return
+		return // offline: retried at the next rediscovery
 	}
 	m, err := parseIPP(rb)
 	if err != nil {
@@ -261,7 +269,7 @@ func pageWorker() {
 		deadline := time.Now().Add(15 * time.Minute)
 		for {
 			pj.m.setOpAttr(0x45, "printer-uri", []byte(tgt.uri()))
-			rb, err := printerDo(tgt, pj.m.encode())
+			rb, err := printerDo(tgt, pj.m.encode(), false)
 			st := "error"
 			if err == nil {
 				if rm, perr := parseIPP(rb); perr == nil {
@@ -274,11 +282,19 @@ func pageWorker() {
 					}
 				}
 			} else {
+				if errors.Is(err, errOffline) && time.Now().Before(deadline) {
+					time.Sleep(10 * time.Second)
+					continue
+				}
 				st = err.Error()
 			}
 			log.Printf("Print-Job %s: status %s", pj.label, st)
 			jobs.add(jobRec{time.Now(), pj.client, "Print-Job", st, pj.label})
-			bump(func() { counters.pages++ })
+			if strings.HasPrefix(st, "0x00") {
+				bump(func() { counters.pages++ })
+			} else {
+				bump(func() { counters.failed++ })
+			}
 			break
 		}
 	}
@@ -409,16 +425,24 @@ func handle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- forward ---
-	rb, err := printerDo(tgt, req.encode())
+	isJob := op == 2 || op == 5 || op == 6 // Print-Job, Create-Job, Send-Document
+	rb, err := printerDo(tgt, req.encode(), false)
 	if err != nil {
-		bump(func() { counters.errors++ })
-		log.Printf("%s: printer error: %v", opName(op), err)
-		http.Error(w, "printer unreachable", http.StatusBadGateway)
+		// Background status checks while the printer is off are normal, not errors.
+		if isJob {
+			bump(func() { counters.failed++ })
+			log.Printf("%s from %s failed: %v", opName(op), r.RemoteAddr, err)
+			jobs.add(jobRec{time.Now(), r.RemoteAddr, opName(op), "offline", "printer not reachable"})
+		}
+		w.Header().Set("Content-Type", "application/ipp")
+		w.Write(ippError(req, 0x0502, "The printer is offline or not reachable."))
 		return
 	}
 	rm, err := parseIPP(rb)
 	if err != nil {
-		bump(func() { counters.errors++ })
+		if isJob {
+			bump(func() { counters.failed++ })
+		}
 		log.Printf("%s: unparseable printer reply (%d bytes): %v; passing through", opName(op), len(rb), err)
 		w.Header().Set("Content-Type", "application/ipp")
 		w.Write(rb)
@@ -521,6 +545,19 @@ func handle(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/ipp")
 	w.Write(rm.encode())
+}
+
+// ippError builds an IPP error reply (e.g. 0x0502 server-error-service-unavailable).
+func ippError(req *msg, status uint16, message string) []byte {
+	var b []byte
+	b = append(b, 0x02, 0x00)
+	b = binary.BigEndian.AppendUint16(b, status)
+	b = binary.BigEndian.AppendUint32(b, req.reqID())
+	b = append(b, 0x01)
+	b = append(b, ippAttr(0x47, "attributes-charset", "utf-8")...)
+	b = append(b, ippAttr(0x48, "attributes-natural-language", "en")...)
+	b = append(b, ippAttr(0x41, "status-message", message)...)
+	return append(b, 0x03)
 }
 
 func main() {

@@ -14,5 +14,6 @@ T=amd64  build env GOARCH=amd64
 (cd "$OUT/bin" && sha256sum selphy-relay-* > SHA256SUMS)
 cp openwrt/install.sh openwrt/selphy-relay.init openwrt/selphy-relay.config README.md LICENSE "$OUT/"
 cp *.go go.mod "$OUT/src/"
-tar -C dist -czf "dist/selphy-relay-$V.tar.gz" selphy-relay
-echo "dist/selphy-relay-$V.tar.gz"
+echo "$V" > "$OUT/VERSION"
+tar -C dist -czf "dist/selphy-relay.tar.gz" selphy-relay
+echo "dist/selphy-relay.tar.gz ($V)"

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -29,7 +30,7 @@ func pollPrinter() {
 	if a, _ := tgt.get(); a == "" {
 		return
 	}
-	rb, err := printerDo(tgt, buildGPA(tgt.uri(), statusAttrs...))
+	rb, err := printerDo(tgt, buildGPA(tgt.uri(), statusAttrs...), true)
 	var m *msg
 	if err == nil {
 		m, err = parseIPP(rb)
@@ -38,7 +39,11 @@ func pollPrinter() {
 	defer pstatus.Unlock()
 	pstatus.at = time.Now()
 	if err != nil {
-		pstatus.err = err.Error()
+		if errors.Is(err, errOffline) {
+			pstatus.err = ""
+		} else {
+			pstatus.err = err.Error()
+		}
 		return
 	}
 	pstatus.err = ""
@@ -79,7 +84,9 @@ type statusData struct {
 	Requests    int                 `json:"requests"`
 	Jobs        int                 `json:"jobs"`
 	Pages       int                 `json:"pages"`
-	Errors      int                 `json:"errors"`
+	Failed      int                 `json:"failed_jobs"`
+	Online      bool                `json:"online"`
+	OfflineFor  string              `json:"offline_since"`
 	Recent      []jobRec            `json:"recent"`
 	Log         []string            `json:"log"`
 }
@@ -96,6 +103,11 @@ func collect() statusData {
 		d.FoundAt = tgt.found.Format("Jan 2 15:04:05")
 	}
 	tgt.mu.RUnlock()
+	online, known, since := printerOnline()
+	d.Online = online || !known
+	if known && !online {
+		d.OfflineFor = since.Format("Jan 2 15:04")
+	}
 	pstatus.Lock()
 	d.Attrs, d.PollError = pstatus.attrs, pstatus.err
 	if !pstatus.at.IsZero() {
@@ -130,7 +142,7 @@ func collect() statusData {
 		d.Ribbon = strings.Join(rib, "; ")
 	}
 	counters.Lock()
-	d.Requests, d.Jobs, d.Pages, d.Errors = counters.requests, counters.jobs, counters.pages, counters.errors
+	d.Requests, d.Jobs, d.Pages, d.Failed = counters.requests, counters.jobs, counters.pages, counters.failed
 	counters.Unlock()
 	d.Recent = jobs.get()
 	lg := logs.get()
@@ -163,7 +175,7 @@ main{max-width:860px;margin:0 auto;padding:20px}h1{font-size:20px;margin:0 0 4px
 .sub{color:var(--mut);margin-bottom:18px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
 dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:0}dt{color:var(--mut)}dd{margin:0;word-break:break-word}
-.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}table{width:100%;border-collapse:collapse}
+.ok{color:var(--ok)}.mut{color:var(--mut)}.bad{color:var(--bad)}.warn{color:var(--warn)}table{width:100%;border-collapse:collapse}
 td,th{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--mut);font-weight:500}
 pre{margin:0;max-height:320px;overflow:auto;font:12px/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap}
 .nums{display:flex;gap:22px}.nums b{font-size:20px;display:block}</style></head><body><main>
@@ -171,13 +183,15 @@ pre{margin:0;max-height:320px;overflow:auto;font:12px/1.4 ui-monospace,Menlo,mon
 {{if .Problem}}<div class="card warn">{{.Problem}}</div>{{end}}
 <div class="grid"><div class="card"><h2>Printer</h2><dl>
 <dt>Name</dt><dd>{{or .Printer "—"}}</dd><dt>Address</dt><dd>{{or .PrinterAddr "—"}}</dd>
-<dt>State</dt><dd>{{if .PollError}}<span class="bad">unreachable: {{.PollError}}</span>{{else}}{{or .State "—"}}{{end}}</dd>
-<dt>Problems</dt><dd>{{if ok .Reasons}}<span class="ok">none</span>{{else}}<span class="bad">{{.Reasons}}</span>{{end}}</dd>
-<dt>Paper</dt><dd>{{or .Paper "—"}}</dd><dt>Ribbon</dt><dd>{{or .Ribbon "—"}}</dd>
+{{if .OfflineFor}}<dt>State</dt><dd><span class="mut">offline since {{.OfflineFor}}</span></dd>
+<dt>Problems</dt><dd><span class="mut">—</span></dd>
+{{else}}<dt>State</dt><dd>{{if .PollError}}<span class="bad">{{.PollError}}</span>{{else}}{{or .State "—"}}{{end}}</dd>
+<dt>Problems</dt><dd>{{if ok .Reasons}}<span class="ok">none</span>{{else}}<span class="bad">{{.Reasons}}</span>{{end}}</dd>{{end}}
+{{if .OfflineFor}}<dt>Paper</dt><dd>—</dd><dt>Ribbon</dt><dd>—</dd>{{else}}<dt>Paper</dt><dd>{{or .Paper "—"}}</dd><dt>Ribbon</dt><dd>{{or .Ribbon "—"}}</dd>{{end}}
 <dt>Checked</dt><dd>{{or .PolledAt "—"}}</dd></dl></div>
 <div class="card"><h2>Relay</h2><dl><dt>Mode</dt><dd>{{.Mode}}</dd><dt>Quality cap</dt><dd>{{.MaxQuality}}</dd>
 <dt>Discovered</dt><dd>{{or .FoundAt "—"}}</dd><dt>Address</dt><dd>{{.RelayURL}}</dd></dl>
-<div class="nums" style="margin-top:12px"><div><b>{{.Jobs}}</b>jobs</div><div><b>{{.Pages}}</b>pages</div><div><b>{{.Errors}}</b>errors</div><div><b>{{.Requests}}</b>requests</div></div></div></div>
+<div class="nums" style="margin-top:12px"><div><b>{{.Jobs}}</b>jobs</div><div><b>{{.Pages}}</b>pages</div><div><b>{{.Failed}}</b>failed jobs</div><div><b>{{.Requests}}</b>requests</div></div></div></div>
 <div class="card"><h2>Recent activity</h2>{{if .Recent}}<table><tr><th>Time</th><th>Operation</th><th>Result</th><th>Details</th><th>From</th></tr>
 {{range .Recent}}<tr><td>{{t .Time}}</td><td>{{.Op}}</td><td class="{{if good .Status}}ok{{else}}bad{{end}}">{{.Status}}</td><td>{{.Info}}</td><td>{{.Client}}</td></tr>{{end}}</table>
 {{else}}<div class="sub">No jobs yet.</div>{{end}}</div>
