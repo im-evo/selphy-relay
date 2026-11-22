@@ -599,7 +599,11 @@ func main() {
 	go func() {
 		for {
 			discoverOnce()
-			time.Sleep(*rediscov)
+			if a, _ := tgt.get(); a == "" {
+				time.Sleep(15 * time.Second) // printer never found yet: look again soon
+			} else {
+				time.Sleep(*rediscov)
+			}
 		}
 	}()
 	srv := &http.Server{Addr: *listen, Handler: http.HandlerFunc(handle), ReadHeaderTimeout: 30 * time.Second}

@@ -53,8 +53,8 @@ Then print to "*&lt;printer name&gt; Relay*". Status page: `http://<router>:8631
 
 The printer doesn't have to be on during installation. The relay configures itself from the printer's own
 network announcement: with the printer on, that happens within seconds. With the printer off, the relay
-waits and checks again every 2 minutes; phones won't see "*… Relay*" until the printer has been found
-once. After that, switching the printer off and on is handled automatically (shown as "offline" on the
+keeps looking every 15 seconds and configures itself shortly after the printer is switched on; phones
+won't see "*… Relay*" until the printer has been found once. After that, switching the printer off and on is handled automatically (shown as "offline" on the
 status page in between).
 Upgrade: run the same commands again (your config is kept). Uninstall: `./install.sh uninstall`.
 
@@ -77,7 +77,8 @@ Edit `/etc/config/selphy-relay`, then `/etc/init.d/selphy-relay restart`:
 | `quality` | `0` | Max print-quality; `0` = the printer's own maximum |
 | `name` | *(empty)* | Name shown on phones (default "&lt;printer name&gt; Relay") |
 
-The relay finds the printer via mDNS and re-checks its address every 2 minutes, so no DHCP reservation is needed.
+The relay finds the printer via mDNS (every 15 seconds until found, then every 2 minutes to follow address
+changes), so no DHCP reservation is needed.
 It generates its avahi service from the printer's own advertisement, with its own UUID and a `relay=` marker so it
 never discovers itself.
 
