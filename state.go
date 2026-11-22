@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -116,7 +117,10 @@ var httpc = &http.Client{
 
 // ---- printer reachability ----
 
-var errOffline = errors.New("printer is offline")
+var (
+	errOffline = errors.New("printer is offline")
+	errSelf    = errors.New("printer address points at this relay")
+)
 
 var reach struct {
 	sync.Mutex
@@ -172,6 +176,11 @@ func printerDo(t *target, body []byte, probe bool) ([]byte, error) {
 	}
 	if !probe && skipOffline() {
 		return nil, errOffline
+	}
+	if h, p, err := net.SplitHostPort(addr); err == nil {
+		if port, _ := strconv.Atoi(p); isSelf(net.ParseIP(h), port) {
+			return nil, errSelf // never forward to ourselves: it would deadlock on printerMu
+		}
 	}
 	req, _ := http.NewRequest(http.MethodPost, "http://"+addr+path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/ipp")

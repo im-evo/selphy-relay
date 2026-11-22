@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-const version = "1.0.1"
+const version = "1.0.2"
 
 var (
 	listen   = flag.String("listen", ":8631", "address to listen on")
@@ -98,8 +98,11 @@ func discoverOnce() {
 	var pick *service
 	for i := range svcs {
 		s := &svcs[i]
-		if s.txtGet("relay") != "" || s.ip == nil {
-			continue // skip ourselves / other relays and unresolved hosts
+		if s.txtGet("relay") != "" || len(s.txt) == 0 || s.ip == nil ||
+			isSelf(s.ip, s.port) || strings.EqualFold(s.instance, relayName()) {
+			// Skip ourselves and other relays, and entries whose TXT record didn't
+			// arrive (without it a relay can't be told apart from a printer).
+			continue
 		}
 		if *printerF != "" {
 			h, _, _ := net.SplitHostPort(*printerF)
@@ -159,6 +162,23 @@ func discoverOnce() {
 	if addr != "" {
 		writeAvahi()
 	}
+}
+
+// isSelf reports whether ip:port is this relay (one of our addresses and our port).
+func isSelf(ip net.IP, port int) bool {
+	if port != listenPt {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	addrs, _ := net.InterfaceAddrs()
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && n.IP.Equal(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func setErr(s string) {
