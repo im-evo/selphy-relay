@@ -50,6 +50,12 @@ Each download is about 3 MB. If the router's `wget` can't do HTTPS, download the
 `scp -O` it to `/tmp`.
 
 Then print to "*&lt;printer name&gt; Relay*". Status page: `http://<router>:8631/`.
+
+The printer doesn't have to be on during installation. The relay configures itself from the printer's own
+network announcement: with the printer on, that happens within seconds. With the printer off, the relay
+waits and checks again every 2 minutes; phones won't see "*… Relay*" until the printer has been found
+once. After that, switching the printer off and on is handled automatically (shown as "offline" on the
+status page in between).
 Upgrade: run the same commands again (your config is kept). Uninstall: `./install.sh uninstall`.
 
 The installer adds the binary, init script and config to `/etc/sysupgrade.conf`. After a firmware upgrade, run
