@@ -21,7 +21,12 @@ case "$DISTRIB_ARCH" in
 	x86_64*) bin=selphy-relay-amd64 ;;
 	*) echo "Unsupported architecture: $DISTRIB_ARCH"; exit 1 ;;
 esac
-[ -f "bin/$bin" ] || { echo "Missing bin/$bin"; exit 1; }
+if [ ! -f "bin/$bin" ]; then
+	have=$(ls bin 2>/dev/null | sed -n 's/^selphy-relay-//p' | head -1)
+	echo "This package is for '${have:-unknown}', but this router needs '${bin#selphy-relay-}' ($DISTRIB_ARCH)."
+	echo "Download selphy-relay-${bin#selphy-relay-}.tar.gz instead."
+	exit 1
+fi
 ps w | grep -q "[a]vahi-daemon" || echo "Warning: avahi-daemon is not running; phones won't discover the relay (opkg install avahi-nodbus-daemon)."
 
 [ -x /etc/init.d/selphy-relay ] && /etc/init.d/selphy-relay stop || true

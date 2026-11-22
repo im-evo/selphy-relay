@@ -27,15 +27,27 @@ inside the URF data (made the printer's replies worse).
 
 ## Install (OpenWrt / GL.iNet)
 
-Needs `avahi-daemon`, which GL.iNet firmware already runs. On the router:
+Needs `avahi-daemon`, which GL.iNet firmware already runs. On the router — this picks the right
+download for the router's CPU:
 
 ```sh
 cd /tmp
-wget https://github.com/im-evo/selphy-relay/releases/latest/download/selphy-relay.tar.gz
-tar xzf selphy-relay.tar.gz && cd selphy-relay && ./install.sh
+. /etc/openwrt_release
+case "$DISTRIB_ARCH" in aarch64*) A=arm64;; arm_*) A=armv7;; mipsel*) A=mipsle;; mips_*) A=mips;; x86_64*) A=amd64;; esac
+wget https://github.com/im-evo/selphy-relay/releases/latest/download/selphy-relay-$A.tar.gz
+tar xzf selphy-relay-$A.tar.gz && cd selphy-relay && ./install.sh
 ```
 
-(If the router's `wget` can't do HTTPS, download the tarball on a computer and `scp -O` it to `/tmp`.)
+| `DISTRIB_ARCH` (in `/etc/openwrt_release`) | Download | Typical routers |
+|---|---|---|
+| `aarch64_*` | `selphy-relay-arm64.tar.gz` | GL.iNet Flint 2 / Flint 3 / Slate AX, most recent Wi-Fi 6/7 routers |
+| `arm_*` | `selphy-relay-armv7.tar.gz` | Older ARM routers (e.g. IPQ40xx, Linksys WRT) |
+| `mipsel_*` | `selphy-relay-mipsle.tar.gz` | MT7621-based routers |
+| `mips_*` | `selphy-relay-mips.tar.gz` | Older Atheros / QCA routers |
+| `x86_64` | `selphy-relay-amd64.tar.gz` | OpenWrt on a PC or VM |
+
+Each download is about 3 MB. If the router's `wget` can't do HTTPS, download the file on a computer and
+`scp -O` it to `/tmp`.
 
 Then print to "*&lt;printer name&gt; Relay*". Status page: `http://<router>:8631/`.
 Upgrade: run the same commands again (your config is kept). Uninstall: `./install.sh uninstall`.
@@ -84,7 +96,7 @@ loaded paper size, recent jobs with results, counters and the log. A switched-of
 Go standard library only.
 
 ```sh
-./scripts/build-release.sh        # all targets + tarball in dist/
+./scripts/build-release.sh        # one tarball per architecture in dist/
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o selphy-relay .
 ```
 
