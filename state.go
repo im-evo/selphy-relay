@@ -18,17 +18,23 @@ import (
 
 // ---- ring buffers for the status page ----
 
+type logLine struct {
+	Time time.Time `json:"time"`
+	Msg  string    `json:"msg"`
+}
+
 type logRing struct {
 	mu    sync.Mutex
-	lines []string
+	lines []logLine
 	max   int
 }
 
 func (l *logRing) Write(p []byte) (int, error) {
 	os.Stderr.Write(p)
+	now := time.Now().UTC()
 	l.mu.Lock()
 	for _, s := range strings.Split(strings.TrimRight(string(p), "\n"), "\n") {
-		l.lines = append(l.lines, time.Now().Format("15:04:05 ")+s)
+		l.lines = append(l.lines, logLine{now, s})
 	}
 	if len(l.lines) > l.max {
 		l.lines = l.lines[len(l.lines)-l.max:]
@@ -37,10 +43,10 @@ func (l *logRing) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (l *logRing) get() []string {
+func (l *logRing) get() []logLine {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return append([]string(nil), l.lines...)
+	return append([]logLine(nil), l.lines...)
 }
 
 type jobRec struct {
@@ -57,6 +63,7 @@ type jobRing struct {
 }
 
 func (j *jobRing) add(r jobRec) {
+	r.Time = r.Time.UTC()
 	j.mu.Lock()
 	j.recs = append(j.recs, r)
 	if len(j.recs) > 30 {

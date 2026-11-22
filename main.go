@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-const version = "1.0.2"
+const version = "1.0.3"
 
 var (
 	listen   = flag.String("listen", ":8631", "address to listen on")

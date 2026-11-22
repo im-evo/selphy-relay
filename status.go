@@ -71,14 +71,14 @@ type statusData struct {
 	Uptime      string              `json:"uptime"`
 	Printer     string              `json:"printer"`
 	PrinterAddr string              `json:"printer_address"`
-	FoundAt     string              `json:"discovered_at"`
+	FoundAt     string              `json:"discovered_at"` // RFC 3339, UTC
 	MaxQuality  int                 `json:"max_quality"`
 	Problem     string              `json:"problem"`
 	State       string              `json:"printer_state"`
 	Reasons     string              `json:"printer_state_reasons"`
 	Paper       string              `json:"paper_loaded"`
 	Ribbon      string              `json:"ribbon"`
-	PolledAt    string              `json:"polled_at"`
+	PolledAt    string              `json:"polled_at"` // RFC 3339, UTC
 	PollError   string              `json:"poll_error"`
 	Attrs       map[string][]string `json:"printer_attributes"`
 	Requests    int                 `json:"requests"`
@@ -86,9 +86,9 @@ type statusData struct {
 	Pages       int                 `json:"pages"`
 	Failed      int                 `json:"failed_jobs"`
 	Online      bool                `json:"online"`
-	OfflineFor  string              `json:"offline_since"`
+	OfflineFor  string              `json:"offline_since"` // RFC 3339, UTC; empty when online
 	Recent      []jobRec            `json:"recent"`
-	Log         []string            `json:"log"`
+	Log         []logLine           `json:"log"`
 }
 
 var stateNames = map[string]string{"3": "idle", "4": "printing", "5": "stopped"}
@@ -100,18 +100,18 @@ func collect() statusData {
 	tgt.mu.RLock()
 	d.Printer, d.PrinterAddr, d.MaxQuality, d.Problem = tgt.instance, tgt.addr+tgt.path, tgt.maxQ, tgt.lastError
 	if !tgt.found.IsZero() {
-		d.FoundAt = tgt.found.Format("Jan 2 15:04:05")
+		d.FoundAt = iso(tgt.found)
 	}
 	tgt.mu.RUnlock()
 	online, known, since := printerOnline()
 	d.Online = online || !known
 	if known && !online {
-		d.OfflineFor = since.Format("Jan 2 15:04")
+		d.OfflineFor = iso(since)
 	}
 	pstatus.Lock()
 	d.Attrs, d.PollError = pstatus.attrs, pstatus.err
 	if !pstatus.at.IsZero() {
-		d.PolledAt = pstatus.at.Format("15:04:05")
+		d.PolledAt = iso(pstatus.at)
 	}
 	pstatus.Unlock()
 	if d.Attrs != nil {
@@ -153,6 +153,13 @@ func collect() statusData {
 	return d
 }
 
+func iso(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
 func statusJSON(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	e := json.NewEncoder(w)
@@ -161,8 +168,16 @@ func statusJSON(w http.ResponseWriter) {
 }
 
 var page = template.Must(template.New("p").Funcs(template.FuncMap{
-	"ok": func(s string) bool { return s == "none" || s == "" },
-	"t":  func(t time.Time) string { return t.Format("15:04:05") },
+	"ok":   func(s string) bool { return s == "none" || s == "" },
+	"iso":  iso,
+	"isoT": func(t time.Time) string { return iso(t) },
+	"utc": func(s string) string { // fallback text if JavaScript is off
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return s
+		}
+		return t.Format("Jan 2 15:04:05") + " UTC"
+	},
 	"good": func(s string) bool {
 		return strings.HasPrefix(s, "0x00")
 	},
@@ -179,24 +194,36 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:0}dt{color:va
 td,th{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--mut);font-weight:500}
 pre{margin:0;max-height:320px;overflow:auto;font:12px/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap}
 .nums{display:flex;gap:22px}.nums b{font-size:20px;display:block}</style></head><body><main>
-<h1>{{.RelayName}}</h1><div class="sub">selphy-relay {{.Version}} · up {{.Uptime}} · refreshes every 15 s · <a href="/status.json">JSON</a></div>
+<h1>{{.RelayName}}</h1><div class="sub">selphy-relay {{.Version}} · up {{.Uptime}} · refreshes every 15 s · <span id="tz">times in UTC</span> · <a href="/status.json">JSON</a></div>
 {{if .Problem}}<div class="card warn">{{.Problem}}</div>{{end}}
 <div class="grid"><div class="card"><h2>Printer</h2><dl>
 <dt>Name</dt><dd>{{or .Printer "—"}}</dd><dt>Address</dt><dd>{{or .PrinterAddr "—"}}</dd>
-{{if .OfflineFor}}<dt>State</dt><dd><span class="mut">offline since {{.OfflineFor}}</span></dd>
+{{if .OfflineFor}}<dt>State</dt><dd><span class="mut">offline since <time data-t="{{.OfflineFor}}" data-f="dt">{{utc .OfflineFor}}</time></span></dd>
 <dt>Problems</dt><dd><span class="mut">—</span></dd>
 {{else}}<dt>State</dt><dd>{{if .PollError}}<span class="bad">{{.PollError}}</span>{{else}}{{or .State "—"}}{{end}}</dd>
 <dt>Problems</dt><dd>{{if ok .Reasons}}<span class="ok">none</span>{{else}}<span class="bad">{{.Reasons}}</span>{{end}}</dd>{{end}}
 {{if .OfflineFor}}<dt>Paper</dt><dd>—</dd><dt>Ribbon</dt><dd>—</dd>{{else}}<dt>Paper</dt><dd>{{or .Paper "—"}}</dd><dt>Ribbon</dt><dd>{{or .Ribbon "—"}}</dd>{{end}}
-<dt>Checked</dt><dd>{{or .PolledAt "—"}}</dd></dl></div>
+<dt>Checked</dt><dd>{{if .PolledAt}}<time data-t="{{.PolledAt}}">{{utc .PolledAt}}</time>{{else}}—{{end}}</dd></dl></div>
 <div class="card"><h2>Relay</h2><dl><dt>Mode</dt><dd>{{.Mode}}</dd><dt>Quality cap</dt><dd>{{.MaxQuality}}</dd>
-<dt>Discovered</dt><dd>{{or .FoundAt "—"}}</dd><dt>Address</dt><dd>{{.RelayURL}}</dd></dl>
+<dt>Discovered</dt><dd>{{if .FoundAt}}<time data-t="{{.FoundAt}}" data-f="dt">{{utc .FoundAt}}</time>{{else}}—{{end}}</dd><dt>Address</dt><dd>{{.RelayURL}}</dd></dl>
 <div class="nums" style="margin-top:12px"><div><b>{{.Jobs}}</b>jobs</div><div><b>{{.Pages}}</b>pages</div><div><b>{{.Failed}}</b>failed jobs</div><div><b>{{.Requests}}</b>requests</div></div></div></div>
 <div class="card"><h2>Recent activity</h2>{{if .Recent}}<table><tr><th>Time</th><th>Operation</th><th>Result</th><th>Details</th><th>From</th></tr>
-{{range .Recent}}<tr><td>{{t .Time}}</td><td>{{.Op}}</td><td class="{{if good .Status}}ok{{else}}bad{{end}}">{{.Status}}</td><td>{{.Info}}</td><td>{{.Client}}</td></tr>{{end}}</table>
+{{range .Recent}}<tr><td><time data-t="{{isoT .Time}}">{{utc (isoT .Time)}}</time></td><td>{{.Op}}</td><td class="{{if good .Status}}ok{{else}}bad{{end}}">{{.Status}}</td><td>{{.Info}}</td><td>{{.Client}}</td></tr>{{end}}</table>
 {{else}}<div class="sub">No jobs yet.</div>{{end}}</div>
-<div class="card"><h2>Log</h2><pre>{{range .Log}}{{.}}
-{{end}}</pre></div></main></body></html>`))
+<div class="card"><h2>Log</h2><pre>{{range .Log}}<time data-t="{{isoT .Time}}">{{utc (isoT .Time)}}</time> {{.Msg}}
+{{end}}</pre></div></main><script>
+// Show times in the viewer's time zone; the server sends UTC.
+document.querySelectorAll("time[data-t]").forEach(function (e) {
+  var d = new Date(e.getAttribute("data-t"));
+  if (isNaN(d)) return;
+  e.textContent = e.getAttribute("data-f") === "dt"
+    ? d.toLocaleString([], {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"})
+    : d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+  e.title = d.toString();
+});
+var z = document.getElementById("tz");
+try { z.textContent = "times in " + Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (x) { z.textContent = "local times"; }
+</script></body></html>`))
 
 func statusHTML(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
